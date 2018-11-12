@@ -15,6 +15,8 @@ import os
 import boto3
 import logging
 from urllib.parse import unquote_plus
+import json
+import base64
 
 logger = logging.getLogger()
 
@@ -29,6 +31,38 @@ def lazy_property(func):
         return getattr(self, attr_name)
     return _lazy_property
 
+class Lambda():
+
+    def __init__(self, event):
+        self.event = event
+        self.input_folder = get_environment_variable('SCAR_INPUT_DIR')
+        self.output_folder = get_environment_variable('SCAR_OUTPUT_DIR')
+        self.request_id = get_environment_variable('REQUEST_ID')
+
+    @lazy_property
+    def output_bucket(self):
+        output_bucket = get_environment_variable('OUTPUT_BUCKET')
+        return output_bucket
+    
+    @lazy_property
+    def output_bucket_folder(self):
+        output_folder = get_environment_variable('OUTPUT_FOLDER')
+        return output_folder
+    
+    @lazy_property
+    def input_bucket(self):
+        input_bucket = get_environment_variable('INPUT_BUCKET')
+        return input_bucket
+    
+    def has_output_bucket(self):
+        return is_variable_in_environment('OUTPUT_BUCKET')
+
+    def has_output_bucket_folder(self):
+        return is_variable_in_environment('OUTPUT_FOLDER')
+    
+    def has_input_bucket(self):
+        return is_variable_in_environment('INPUT_BUCKET')
+
 class S3():
     
     @lazy_property
@@ -36,15 +70,15 @@ class S3():
         client = boto3.client('s3')
         return client
     
-    def __init__(self, lambda_instance=None):
-        if lambda_instance:
-            self.lambda_instance = lambda_instance
-            if is_value_in_dict(self.lambda_instance.event, 'Records'):
-                self.record = self.get_s3_record()
-                self.input_bucket = self.record['bucket']['name']
-                self.file_key = unquote_plus(self.record['object']['key'])
-                self.file_name = os.path.basename(self.file_key).replace(' ', '')
-                self.file_download_path = '{0}/{1}'.format(self.lambda_instance.input_folder, self.file_name)
+    def __init__(self, lambda_instance):
+        self.lambda_instance = lambda_instance
+        if is_value_in_dict(self.lambda_instance.event, 'Records'):
+            self.record = self.get_s3_record()
+            self.input_bucket = self.record['bucket']['name']
+            self.file_key = unquote_plus(self.record['object']['key'])
+            self.file_name = os.path.basename(self.file_key).replace(' ', '')
+            self.file_download_path = '{0}/{1}'.format(self.lambda_instance.input_folder, self.file_name)
+            self.function_name = os.path.dirname(self.file_key).split("/")[0]
 
     def get_s3_record(self):
         if len(self.lambda_instance.event['Records']) > 1:
@@ -56,14 +90,14 @@ class S3():
 
     def download_input(self):
         '''Downloads the file from the S3 bucket and returns the path were the download is placed'''
-        logger.info("Downloading item from bucket '{0}' with key '{1}'".format(self.input_bucket, self.file_key))
+        print("Downloading item from bucket '{0}' with key '{1}'".format(self.input_bucket, self.file_key))
         if not os.path.isdir(self.file_download_path):
             os.makedirs(os.path.dirname(self.file_download_path), exist_ok=True)
         with open(self.file_download_path, 'wb') as data:
             self.client.download_fileobj(self.input_bucket, self.file_key, data)
-        logger.info("Successful download of file '{0}' from bucket '{1}' in path '{2}'".format(self.file_key, 
-                                                                                               self.input_bucket,
-                                                                                               self.file_download_path))
+        print("Successful download of file '{0}' from bucket '{1}' in path '{2}'".format(self.file_key,
+                                                                                         self.input_bucket,
+                                                                                         self.file_download_path))
         return self.file_download_path
   
     def get_file_key(self, function_name=None, folder=None, file_name=None):
@@ -74,20 +108,20 @@ class S3():
 
     def upload_output(self, bucket_name, bucket_folder=None):
         output_files_path = get_all_files_in_directory(self.lambda_instance.output_folder)
-        logger.debug("UPLOADING FILES {0}".format(output_files_path))
+        print("UPLOADING FILES {0}".format(output_files_path))
         for file_path in output_files_path:
             file_name = file_path.replace("{0}/".format(self.lambda_instance.output_folder), "")
             if bucket_folder:
                 file_key = self.get_file_key(folder=bucket_folder, file_name=file_name)
             else:
-                file_key = self.get_file_key(function_name=self.lambda_instance.function_name, folder='output', file_name=file_name)
+                file_key = self.get_file_key(function_name=self.function_name, folder='output', file_name=file_name)
             self.upload_file(bucket_name, file_path, file_key)
             
     def upload_file(self, bucket_name, file_path, file_key):
-        logger.info("Uploading file  '{0}' to bucket '{1}'".format(file_key, bucket_name))
+        print("Uploading file  '{0}' to bucket '{1}'".format(file_key, bucket_name))
         with open(file_path, 'rb') as data:
             self.client.upload_fileobj(data, bucket_name, file_key)
-        logger.info("Changing ACLs for public-read for object in bucket {0} with key {1}".format(bucket_name, file_key))
+        print("Changing ACLs for public-read for object in bucket {0} with key {1}".format(bucket_name, file_key))
         obj = boto3.resource('s3').Object(bucket_name, file_key)
         obj.Acl().put(ACL='public-read')
     
@@ -125,28 +159,56 @@ def get_environment_variable(variable):
 def is_value_in_dict(dictionary, value):
     return value in dictionary and dictionary[value]
 
-def create_user_script():
-    script_path = join_paths(os.environ['SCAR_INPUT_DIR'], 'script.sh')
-    with open(script_path, "w") as file:
-        file.write(os.environ['SCRIPT'])
-    os.system('chmod +x {0}'.format(script_path))
-     
-def manage_input_bucket():
-    if is_variable_in_environment('INPUT_BUCKET'):
-        print('INPUT_BUCKET: {0}'.format(os.environ['INPUT_BUCKET']))
-        S3().download_bucket(os.environ['INPUT_BUCKET'])    
+def base64_to_utf8_string(value):
+    return base64.b64decode(value).decode('utf-8')
 
-def manage_output_bucket():
+def create_file_with_content(path, content):
+    with open(path, "w") as f:
+        f.write(content)
+
+def create_user_script():
+    if is_variable_in_environment('SCRIPT'):
+        script_path = join_paths(get_environment_variable('SCAR_INPUT_DIR'), 'script.sh')
+        script_content = base64_to_utf8_string(get_environment_variable('SCRIPT'))
+        create_file_with_content(script_path, script_content)            
+        os.system('chmod +x {0}'.format(script_path))
+     
+def parse_input():
+    if is_variable_in_environment('INPUT_BUCKET'):
+        lambda_instance = Lambda(json.loads(os.environ['LAMBDA_EVENT']))
+        print('INPUT_BUCKET: {0}'.format(os.environ['INPUT_BUCKET']))
+        S3(lambda_instance).download_input()    
+
+def parse_output():
     if is_variable_in_environment('OUTPUT_BUCKET'):
-        print('OUTPUT_BUCKET: {0}'.format(os.environ['OUTPUT_BUCKET']))        
-        S3().uploadDirectory(os.environ['SCAR_OUTPUT_DIR'], os.environ['OUTPUT_BUCKET'])    
+        upload_to_bucket()
+
+def upload_to_bucket():
+    lambda_instance = Lambda(json.loads(os.environ['LAMBDA_EVENT']))
+    bucket_name = None
+    bucket_folder = None
+
+    if lambda_instance.has_output_bucket():
+        bucket_name = lambda_instance.output_bucket
+        print("OUTPUT BUCKET SET TO {0}".format(bucket_name))
+
+        if lambda_instance.has_output_bucket_folder():
+            bucket_folder = lambda_instance.output_bucket_folder
+            print("OUTPUT FOLDER SET TO {0}".format(bucket_folder))
+
+    elif lambda_instance.has_input_bucket():
+        bucket_name = lambda_instance.input_bucket
+        print("OUTPUT BUCKET SET TO {0}".format(bucket_name))
+
+    if bucket_name:
+        S3(lambda_instance).upload_output(bucket_name, bucket_folder)
 
 if __name__ == "__main__":
     set_log_level()
     step = os.environ['STEP']
     if step == "INIT":
         create_user_script()
-        manage_input_bucket()
+        parse_input()
         
     elif step == "END":
-        manage_output_bucket()
+        parse_output()

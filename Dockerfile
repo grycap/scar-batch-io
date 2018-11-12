@@ -5,15 +5,18 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
-RUN pip3 install boto3 pyinstaller
+RUN pip3 install boto3 urllib3 pyinstaller
 RUN git clone https://github.com/alpegon/scar-batch-io
+#RUN mkdir /scar-batch-io
 WORKDIR /scar-batch-io
-RUN pyinstaller --onefile scarbatch_io.py
+#COPY . .
+RUN pyinstaller --onefile --hidden-import=urllib3 scarbatch_io.py
 
 FROM ubuntu:latest
 LABEL description="Batch input/output manager"
-RUN addgroup --system scar && adduser --system --group scar
-USER scar
-WORKDIR /home/scar/
-ENV SCAR_LOG_PATH=/home/scar/
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+ENV SCAR_LOG_PATH=/var/log/
 COPY --from=sbuilder /scar-batch-io/dist/scarbatch_io /usr/bin/scar-batch-io
