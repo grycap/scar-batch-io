@@ -170,7 +170,8 @@ def create_user_script():
     if is_variable_in_environment('SCRIPT'):
         script_path = join_paths(get_environment_variable('SCAR_INPUT_DIR'), 'script.sh')
         script_content = base64_to_utf8_string(get_environment_variable('SCRIPT'))
-        create_file_with_content(script_path, script_content)            
+        create_file_with_content(script_path, script_content)
+        print("Script file created in '{0}'".format(script_path))          
         os.system('chmod +x {0}'.format(script_path))
      
 def parse_input():
@@ -180,8 +181,7 @@ def parse_input():
         S3(lambda_instance).download_input()    
 
 def parse_output():
-    if is_variable_in_environment('OUTPUT_BUCKET'):
-        upload_to_bucket()
+    upload_to_bucket()
 
 def upload_to_bucket():
     lambda_instance = Lambda(json.loads(os.environ['LAMBDA_EVENT']))
