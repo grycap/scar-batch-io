@@ -171,7 +171,7 @@ def create_user_script():
         script_path = join_paths(get_environment_variable('SCAR_INPUT_DIR'), 'script.sh')
         script_content = base64_to_utf8_string(get_environment_variable('SCRIPT'))
         create_file_with_content(script_path, script_content)
-        print("Script file created in '{0}'".format(script_path))          
+        print("Script file created in '{0}'".format(script_path))
         os.system('chmod +x {0}'.format(script_path))
      
 def parse_input():
@@ -207,8 +207,10 @@ if __name__ == "__main__":
     set_log_level()
     step = os.environ['STEP']
     if step == "INIT":
+        print("INIT STEP")
         create_user_script()
         parse_input()
         
     elif step == "END":
+        print("END STEP")
         parse_output()

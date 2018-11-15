@@ -6,10 +6,9 @@ RUN apt-get update && apt-get install -y \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 RUN pip3 install boto3 urllib3 pyinstaller
-RUN git clone https://github.com/alpegon/scar-batch-io
-#RUN mkdir /scar-batch-io
+RUN mkdir /scar-batch-io
 WORKDIR /scar-batch-io
-#COPY . .
+COPY . .
 RUN pyinstaller --onefile --hidden-import=urllib3 scarbatch_io.py
 
 FROM ubuntu:latest
